@@ -1,65 +1,69 @@
-// import { Global, Module, NotFoundException, Scope } from '@nestjs/common';
-// import { REQUEST } from '@nestjs/core';
-// import { Connection, createConnection, getConnectionManager } from 'typeorm';
-// import { SnakeNamingStrategy } from 'typeorm-naming-strategies';
-// import { PostgresConnectionOptions } from 'typeorm/driver/postgres/PostgresConnectionOptions';
+import { Global, Module, Scope } from '@nestjs/common';
+import { REQUEST } from '@nestjs/core';
+import { JwtService } from '@nestjs/jwt';
+import { DataSource, DataSourceOptions } from 'typeorm';
+import { SnakeNamingStrategy } from 'typeorm-naming-strategies';
+import { createDBIfNotExists } from '../typeorm.config';
 
-// // @Module({})
-// // export class TenancyModule {}
+// Global object to store the connections
+const dataSources: { [key: string]: DataSource } = {};
 
-// const CONNECTION = Symbol('TENANT_CONNECTION');
+export const TENANT_DATA_SOURCE = Symbol('TENANT_DATA_SOURCE');
 
-// const connectionFactory = {
-//   provide: CONNECTION,
-//   scope: Scope.REQUEST,
-//   useFactory: async (request: Request) => {
-//     // get schema id from a header as project id
-//     const tenantId = getTenantId(request);
+const dataSourceFactory = {
+  provide: TENANT_DATA_SOURCE, // is a symbol
+  scope: Scope.REQUEST,
+  useFactory: async (request: Request, jwtService: JwtService) => {
+    // Probably there's a better way than verifying using JwtService here..
+    const userId = jwtService.verify(
+      request.headers['authorization'].split(' ')[1],
+      {
+        secret: process.env.JWT_SECRET,
+      },
+    ).userId;
 
-//     if (tenantId) {
-//       return getTenantConnection(tenantId); // find and return a connection
-//     }
+    const tenantUserId = userId;
 
-//     return null;
-//   },
-//   inject: [REQUEST], // use `request-scoped` for all usages
-// };
+    if (tenantUserId) {
+      return getTenantDataSource(tenantUserId); // find and return a connection
+    }
 
-// @Global()
-// @Module({
-//   providers: [connectionFactory],
-//   exports: [CONNECTION],
-// })
-// export class TenancyModule {}
+    return null;
+  },
+  inject: [REQUEST, JwtService], // use `request-scoped` for all usages
+};
 
-// export async function getTenantConnection(
-//   tenantId: string,
-// ): Promise<Connection> {
-//   const connectionName = `tenant_${tenantId}`;
-//   const connectionManager = getConnectionManager();
+@Global()
+@Module({
+  providers: [dataSourceFactory, JwtService],
+  exports: [TENANT_DATA_SOURCE],
+})
+export class TenancyModule {}
 
-//   // cache hit
-//   if (connectionManager.has(connectionName)) {
-//     const conn = connectionManager.get(connectionName);
+export async function getTenantDataSource(
+  tenantUserId: string,
+): Promise<DataSource> {
+  const dataSourceName = `tenant_${tenantUserId}`;
 
-//     return conn.isConnected ? conn : conn.connect();
-//   }
+  if (dataSources[dataSourceName]) return dataSources[dataSourceName];
 
-//   try {
-//     const conn = await createConnection({
-//       ...({
-//         type: 'postgres',
-//         url: `postgresql://postgres:password@localhost:5432/${connectionName}`,
-//         entities: ['dist/**/*/*.entity{.ts,.js}'],
-//         synchronize: true,
-//         namingStrategy: new SnakeNamingStrategy(),
-//       } as PostgresConnectionOptions),
-//       name: connectionName,
-//       schema: connectionName,
-//     });
+  // If the connection does not exist, create a new one
+  await createDBIfNotExists(dataSourceName);
 
-//     return conn;
-//   } catch (err) {
-//     throw new NotFoundException('project id is not found');
-//   }
-// }
+  const dataSourceOptions: DataSourceOptions = {
+    type: 'postgres',
+    url: process.env.DATABASE_BASE_URL + dataSourceName,
+    entities: ['dist/**/*/task.entity{.ts,.js}'],
+    synchronize: true,
+    namingStrategy: new SnakeNamingStrategy(),
+  };
+
+  let dataSource = new DataSource(dataSourceOptions);
+
+  dataSource = await dataSource.initialize();
+
+  // Store the connection in the global object
+  dataSources[dataSourceName] = dataSource;
+
+  return dataSource;
+}

@@ -4,6 +4,7 @@ import {
   InternalServerErrorException,
   UnauthorizedException,
 } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import * as bcrypt from 'bcrypt';
 import { Repository } from 'typeorm';
@@ -15,6 +16,7 @@ export class TenantService {
   constructor(
     @InjectRepository(Tenant)
     private tenantRepository: Repository<Tenant>,
+    private jwtService: JwtService,
   ) {}
 
   async signup({ username, password }: TenantCredentialsDto) {
@@ -37,15 +39,21 @@ export class TenantService {
     }
   }
 
-  async login(loginDto: TenantCredentialsDto) {
+  async login({ username, password }: TenantCredentialsDto) {
     const tenant = await this.tenantRepository.findOne({
       where: {
-        username: loginDto.username,
+        username,
       },
     });
 
-    if (tenant && (await bcrypt.compare(loginDto.password, tenant.password))) {
-      return 'success';
+    if (tenant && (await bcrypt.compare(password, tenant.password))) {
+      const payload = {
+        userId: tenant.id,
+      };
+
+      console.log(payload);
+      const accessToken: string = this.jwtService.sign(payload);
+      return { accessToken };
     } else {
       throw new UnauthorizedException('Invalid username or password');
     }
