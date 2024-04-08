@@ -51,7 +51,6 @@ export class TenantService {
         userId: tenant.id,
       };
 
-      console.log(payload);
       const accessToken: string = this.jwtService.sign(payload);
       return { accessToken };
     } else {
